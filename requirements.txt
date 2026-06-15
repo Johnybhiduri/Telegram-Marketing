@@ -1,0 +1,4 @@
+# Telegram Marketing Bot — Python dependencies
+# Install with:  pip install -r requirements.txt
+
+telethon>=1.37.0
