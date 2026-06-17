@@ -1,68 +1,85 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
 ║        TELEGRAM MARKETING BOT — config.py                       ║
-║  Edit ONLY this file and templates.py before running main.py    ║
+║  Edit .env, groups.txt, and templates.txt instead of this file  ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ─────────────────────────────────────────────────────────────────
-# STEP 1 ─ API CREDENTIALS
-# Get these from https://my.telegram.org  (free, one-time setup)
+# STEP 1 ─ API CREDENTIALS & SETTINGS (From .env)
 # ─────────────────────────────────────────────────────────────────
-API_ID   = 12345678            # ← Replace with YOUR api_id   (integer, no quotes)
-API_HASH = "your_api_hash"     # ← Replace with YOUR api_hash (string, with quotes)
-PHONE    = "+91XXXXXXXXXX"     # ← Your phone number with country code
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+PHONE = os.getenv("PHONE", "")
+SESSION_NAME = os.getenv("SESSION_NAME", "marketing_session")
+
+MIN_DELAY = int(os.getenv("MIN_DELAY", 1800))      # in seconds
+MAX_DELAY = int(os.getenv("MAX_DELAY", 3600))      # in seconds
+MAX_POSTS_PER_DAY = int(os.getenv("MAX_POSTS_PER_DAY", 300))
 
 # ─────────────────────────────────────────────────────────────────
-# STEP 2 ─ SESSION FILE NAME
-# Telethon creates a file called "marketing_session.session"
-# in your project folder. Keep it safe — it stores your login.
+# STEP 2 ─ DEVICE INFO (Makes Telethon look like a real phone)
 # ─────────────────────────────────────────────────────────────────
-SESSION_NAME = "marketing_session"
-
-# ─────────────────────────────────────────────────────────────────
-# STEP 3 ─ DEVICE INFO
-# Makes Telethon look like a real Android phone to Telegram.
-# You can change the model name if you like.
-# ─────────────────────────────────────────────────────────────────
-DEVICE_MODEL   = "Samsung Galaxy S23"
+DEVICE_MODEL = "Samsung Galaxy S23"
 SYSTEM_VERSION = "Android 14"
-APP_VERSION    = "10.9.1"
+APP_VERSION = "10.9.1"
 
 # ─────────────────────────────────────────────────────────────────
-# STEP 4 ─ GROUPS TO POST IN
+# STEP 3 ─ LOAD GROUPS FROM groups.txt
 # ─────────────────────────────────────────────────────────────────
-# Rules:
-#   - You MUST already be a member of every group listed here.
-#   - The group MUST allow marketing/promotional posts.
-#   - Use the group's @username WITHOUT the @ sign.
-#   - Or use the group's numeric ID (negative number like -1001234567890).
-#   - Do NOT add groups that ban advertising — it wastes your time
-#     and trains Telegram to flag your account.
-# ─────────────────────────────────────────────────────────────────
-GROUPS = [
-    "example_promo_group_1",      # ← Replace with real group usernames
-    "example_business_group_2",
-    "example_marketplace_group_3",
-    # "example_group_4",
-    # "example_group_5",
-    # Add as many as you want — but quality > quantity.
-    # 10-20 highly relevant groups is better than 100 random ones.
-]
+def load_groups_from_txt():
+    groups = []
+    if not os.path.exists("groups.txt"):
+        print("⚠️ groups.txt not found. Please create it.")
+        return groups
+    
+    with open("groups.txt", "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            # Ignore empty lines and comments
+            if line and not line.startswith("#"):
+                groups.append(line)
+    return groups
+
+GROUPS = load_groups_from_txt()
 
 # ─────────────────────────────────────────────────────────────────
-# STEP 5 ─ TIMING (in seconds)
+# STEP 4 ─ LOAD TEMPLATES FROM templates.txt
 # ─────────────────────────────────────────────────────────────────
-# Between every single post, the bot waits a RANDOM amount of time
-# within this range.  30–60 minutes is human-like and safe.
-# Do NOT go below 20 minutes — shorter intervals risk your account.
-# ─────────────────────────────────────────────────────────────────
-MIN_DELAY = 30 * 60    # 30 minutes = 1800 seconds
-MAX_DELAY = 60 * 60    # 60 minutes = 3600 seconds
+def load_templates_from_txt():
+    templates_list = []
+    if not os.path.exists("templates.txt"):
+        print("⚠️ templates.txt not found. Please create it.")
+        return templates_list
+    
+    with open("templates.txt", "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # Split by the === separator
+    blocks = content.split("===")
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        
+        image_path = None
+        # Check if the block starts with an image tag
+        if block.startswith("[IMAGE:"):
+            end_idx = block.find("]")
+            if end_idx != -1:
+                image_path = block[7:end_idx].strip()
+                block = block[end_idx+1:].strip() # Remove the tag from the text
+        
+        templates_list.append({
+            "text": block,
+            "image": image_path if image_path else None
+        })
+    
+    return templates_list
 
-# ─────────────────────────────────────────────────────────────────
-# STEP 6 ─ DAILY POSTING LIMIT (safety cap)
-# ─────────────────────────────────────────────────────────────────
-# Maximum number of posts per 24 hours across ALL groups combined.
-# Keeps your activity looking human-level even if your group list is large.
-MAX_POSTS_PER_DAY = 30
+TEMPLATES = load_templates_from_txt()
