@@ -78,7 +78,7 @@ class TelegramMarketer:
         log.info(f"📱 Phone           : +{me.phone}")
         log.info(f"📋 Groups loaded   : {len(config.GROUPS)}")
         log.info(f"📝 Templates loaded: {len(config.TEMPLATES)}")
-        log.info(f"⏱️  Delay range     : {config.MIN_DELAY // 60}–{config.MAX_DELAY // 60} minutes")
+        log.info(f"⏱️  Delay range     : {config.MIN_DELAY // 60}m {config.MIN_DELAY % 60}s – {config.MAX_DELAY // 60}m {config.MAX_DELAY % 60}s")
         log.info(f"📅 Daily post cap  : {config.MAX_POSTS_PER_DAY}")
         log.info("=" * 62)
 
@@ -145,6 +145,19 @@ class TelegramMarketer:
             self.stats["posts_today"] += 1
             log.info(f"✅ Sent → '{name}' | total: {self.stats['sent']} | today: {self.stats['posts_today']}")
             return True
+
+        # ── FALLBACK: Group doesn't allow photos/media ──────────
+        except errors.ChatSendPhotosForbiddenError:
+            log.warning(f"⚠️ Photos/Media not allowed in '{name}'. Retrying with text only...")
+            try:
+                await self.client.send_message(entity, text, parse_mode="md")
+                self.stats["sent"] += 1
+                self.stats["posts_today"] += 1
+                log.info(f"✅ Sent (text-only fallback) → '{name}'")
+                return True
+            except Exception as e2:
+                log.error(f"❌ Text-only fallback also failed: {e2}")
+                return False
 
         except errors.FloodWaitError as e:
             self.stats["flood_waits"] += 1
@@ -214,8 +227,11 @@ class TelegramMarketer:
                     wake_at = (datetime.now() + timedelta(seconds=cooldown)).strftime("%H:%M:%S")
                     log.info(f"☕ Inter-round break: {cooldown // 60}m {cooldown % 60}s (resuming at ~{wake_at})")
                     await asyncio.sleep(cooldown)
-                    continue  # Re-evaluate daily cap after cooldown
+                    # ⚠️ BUG FIX: Removed the 'continue' statement that was here.
+                    # If we 'continue', it loops back to the top, sees index is still 0, 
+                    # and starts Round 3 immediately without posting!
 
+            # Pick the next group in the cycle
             gid = active[self.current_group_idx]
             self.current_group_idx = (self.current_group_idx + 1) % len(active)
 
@@ -230,7 +246,7 @@ class TelegramMarketer:
 
             log.info(f"📊 Stats — sent: {self.stats['sent']} | today: {self.stats['posts_today']} | failed: {self.stats['failed']} | flood_waits: {self.stats['flood_waits']}")
 
-            # Standard delay between EVERY post (No special 3-post wait)
+            # Standard delay between EVERY post
             delay = random.randint(config.MIN_DELAY, config.MAX_DELAY)
             wake = (datetime.now() + timedelta(seconds=delay)).strftime("%H:%M:%S")
             log.info(f"⏰ Next post in {delay // 60}m {delay % 60}s — at {wake}")
