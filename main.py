@@ -199,58 +199,93 @@ class TelegramMarketer:
         log.info("🚀 Bot is running! Starting marketing loop...")
 
         while True:
-            self._check_daily_reset()
+            try:
+                self._check_daily_reset()
 
-            if self.stats["posts_today"] >= config.MAX_POSTS_PER_DAY:
-                now = datetime.now()
-                midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-                wait_secs = int((midnight - now).total_seconds()) + random.randint(120, 600)
-                log.info(f"📅 Daily cap reached. Sleeping until ~{(now + timedelta(seconds=wait_secs)).strftime('%H:%M')}...")
-                await asyncio.sleep(wait_secs)
-                continue
+                if self.stats["posts_today"] >= config.MAX_POSTS_PER_DAY:
+                    now = datetime.now()
+                    midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+                    wait_secs = int((midnight - now).total_seconds()) + random.randint(120, 600)
+                    log.info(f"📅 Daily cap reached. Sleeping until ~{(now + timedelta(seconds=wait_secs)).strftime('%H:%M')}...")
+                    await asyncio.sleep(wait_secs)
+                    continue
 
-            active = [g for g in valid_groups if g not in self.skip_groups]
-            if not active:
-                log.error("❌ Every group has been removed due to errors. Check logs.")
-                break
+                active = [g for g in valid_groups if g not in self.skip_groups]
+                if not active:
+                    log.error("❌ Every group has been removed due to errors. Check logs.")
+                    break
 
-            # Cyclical order logic
-            if self.current_group_idx == 0:
-                self.round_num += 1
-                log.info("-" * 62)
-                log.info(f"🔄 Round {self.round_num} starting — {len(active)} groups in cyclical order")
-                log.info("-" * 62)
+                # ⚠️ BUG FIX (root cause of the crash you hit): 'active' shrinks every time a
+                # group gets added to skip_groups (banned / write-forbidden / admin-required).
+                # current_group_idx was advanced with modulo against the *previous, larger*
+                # length of 'active'. If a group drops out between rounds, current_group_idx
+                # can end up >= the new, smaller len(active) -> IndexError on the next line
+                # that indexes into active. Clamp it back into range before using it.
+                if self.current_group_idx >= len(active):
+                    self.current_group_idx = 0
+
+                # Cyclical order logic
+                if self.current_group_idx == 0:
+                    self.round_num += 1
+                    log.info("-" * 62)
+                    log.info(f"🔄 Round {self.round_num} starting — {len(active)} groups in cyclical order")
+                    log.info("-" * 62)
+                    
+                    # Inter-round break (only if we have more than 1 group to form a "round")
+                    if self.round_num > 1 and len(active) > 1:
+                        cooldown = random.randint(config.MIN_DELAY, config.MAX_DELAY)
+                        wake_at = (datetime.now() + timedelta(seconds=cooldown)).strftime("%H:%M:%S")
+                        log.info(f"☕ Inter-round break: {cooldown // 60}m {cooldown % 60}s (resuming at ~{wake_at})")
+                        await asyncio.sleep(cooldown)
+                        # Note: deliberately no 'continue' here — looping back to the top would
+                        # see current_group_idx still at 0 and immediately start another round
+                        # without ever posting.
+
+                # Pick the next group in the cycle
+                gid = active[self.current_group_idx]
+                self.current_group_idx = (self.current_group_idx + 1) % len(active)
+
+                # Pick a RANDOM template (as requested)
+                template_data = random.choice(config.TEMPLATES)
+                name = getattr(self.group_cache.get(gid), "title", str(gid))
                 
-                # Inter-round break (only if we have more than 1 group to form a "round")
-                if self.round_num > 1 and len(active) > 1:
-                    cooldown = random.randint(config.MIN_DELAY, config.MAX_DELAY)
-                    wake_at = (datetime.now() + timedelta(seconds=cooldown)).strftime("%H:%M:%S")
-                    log.info(f"☕ Inter-round break: {cooldown // 60}m {cooldown % 60}s (resuming at ~{wake_at})")
-                    await asyncio.sleep(cooldown)
-                    # ⚠️ BUG FIX: Removed the 'continue' statement that was here.
-                    # If we 'continue', it loops back to the top, sees index is still 0, 
-                    # and starts Round 3 immediately without posting!
+                log.info(f"📤 Target  : {name}")
+                log.info(f"📝 Preview : {template_data['text'][:70].strip().replace(chr(10), ' ')}...")
 
-            # Pick the next group in the cycle
-            gid = active[self.current_group_idx]
-            self.current_group_idx = (self.current_group_idx + 1) % len(active)
+                await self.send(gid, template_data)
 
-            # Pick a RANDOM template (as requested)
-            template_data = random.choice(config.TEMPLATES)
-            name = getattr(self.group_cache.get(gid), "title", str(gid))
-            
-            log.info(f"📤 Target  : {name}")
-            log.info(f"📝 Preview : {template_data['text'][:70].strip().replace(chr(10), ' ')}...")
+                log.info(f"📊 Stats — sent: {self.stats['sent']} | today: {self.stats['posts_today']} | failed: {self.stats['failed']} | flood_waits: {self.stats['flood_waits']}")
 
-            await self.send(gid, template_data)
+                # Standard delay between EVERY post
+                delay = random.randint(config.MIN_DELAY, config.MAX_DELAY)
+                wake = (datetime.now() + timedelta(seconds=delay)).strftime("%H:%M:%S")
+                log.info(f"⏰ Next post in {delay // 60}m {delay % 60}s — at {wake}")
+                await asyncio.sleep(delay)
 
-            log.info(f"📊 Stats — sent: {self.stats['sent']} | today: {self.stats['posts_today']} | failed: {self.stats['failed']} | flood_waits: {self.stats['flood_waits']}")
-
-            # Standard delay between EVERY post
-            delay = random.randint(config.MIN_DELAY, config.MAX_DELAY)
-            wake = (datetime.now() + timedelta(seconds=delay)).strftime("%H:%M:%S")
-            log.info(f"⏰ Next post in {delay // 60}m {delay % 60}s — at {wake}")
-            await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                # Real task cancellation (e.g. shutdown signal) — let it propagate, don't swallow it.
+                raise
+            except (ConnectionError, OSError) as e:
+                # ⚠️ HARDENING: dropped sockets / network blips used to be unhandled here.
+                # Telethon usually reconnects on its own, but if a raw connection error
+                # surfaces in this loop, try to reconnect explicitly instead of dying.
+                log.error(f"🔌 Connection error in main loop: {type(e).__name__}: {e}")
+                if not self.client.is_connected():
+                    log.warning("🔁 Client appears disconnected — attempting to reconnect...")
+                    try:
+                        await self.client.connect()
+                        log.info("✅ Reconnected.")
+                    except Exception as ce:
+                        log.error(f"❌ Reconnect attempt failed: {ce}")
+                await asyncio.sleep(30)
+                continue
+            except Exception as e:
+                # ⚠️ HARDENING: this is the safety net for the exact crash you hit (and any
+                # similar surprise). Previously ANY unhandled exception here propagated out
+                # of run() and killed the whole bot. Now it's logged and the loop keeps going.
+                log.error(f"⚠️ Unexpected error in main loop — recovering and continuing: {type(e).__name__}: {e}", exc_info=True)
+                await asyncio.sleep(30)
+                continue
 
     async def disconnect(self):
         await self.client.disconnect()
@@ -262,15 +297,34 @@ class TelegramMarketer:
 # ─────────────────────────────────────────────────────────────────
 async def main():
     marketer = TelegramMarketer()
-    try:
-        await marketer.connect()
-        await marketer.run()
-    except KeyboardInterrupt:
-        log.info("🛑 Stopped by user (Ctrl+C)")
-    except Exception as e:
-        log.critical(f"💥 Fatal unhandled exception: {type(e).__name__}: {e}", exc_info=True)
-    finally:
-        await marketer.disconnect()
+    consecutive_failures = 0
+
+    while True:
+        try:
+            if not marketer.client.is_connected():
+                await marketer.connect()
+            consecutive_failures = 0  # reset backoff after a clean (re)connect
+            await marketer.run()
+            # run() only returns normally when there are no valid/active groups left
+            # at all — that's a groups.txt / permissions problem, not something a
+            # restart fixes, so we stop the outer loop too.
+            break
+        except KeyboardInterrupt:
+            log.info("🛑 Stopped by user (Ctrl+C)")
+            break
+        except Exception as e:
+            # ⚠️ HARDENING: this used to be the end of the line — log it and exit.
+            # Now it's a last-resort safety net: log it, back off, and restart the
+            # connect+run cycle so a single fatal/unforeseen exception can't
+            # permanently stop the bot.
+            consecutive_failures += 1
+            wait = min(300, 15 * consecutive_failures)  # capped backoff, max 5 min
+            log.critical(f"💥 Fatal unhandled exception: {type(e).__name__}: {e}", exc_info=True)
+            log.info(f"🔁 Restarting bot in {wait}s to keep marketing running (failure #{consecutive_failures})...")
+            await asyncio.sleep(wait)
+            continue
+
+    await marketer.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(main())
